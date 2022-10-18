@@ -1,7 +1,10 @@
 import copy
 import json
-import threading
 import time
+import unicodedata
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.support.ui import WebDriverWait
 import numpy as np
 from selenium.webdriver import Chrome
 from selenium.webdriver.common.by import By
@@ -17,55 +20,82 @@ class HouseHoldTaxInfo:
         self.driver = None
         self.url = url
         self.city_title = city_title
-        self.open()
+        self.time_out = 5
 
     def open(self):
-        executable_path: str = r"F:\project\python\merchant_crawler\chromedriver_win32\chromedriver.exe"
+        executable_path: str = r"./chromedriver_win32/chromedriver.exe"
         self.driver = Chrome(executable_path=executable_path)
         self.driver.get(self.url)
 
     def do_crawl(self):
-        tinh_selection = self.driver.find_element(By.ID, "maTinh")
-        tinh_choice = Select(tinh_selection)
-        tinh_choice.select_by_value(self.city_title['id'])
-        time.sleep(1)
-        self.do_crawl_quan_huyen()
+        for district in self.city_title['district']:
+            for commune in district['commune']:
+                self.district_crawl(district, commune)
 
-    def do_crawl_quan_huyen(self):
-        quan_huyen_selection = self.driver.find_element(By.ID, "maHuyen")
-        district_title: list = self.city_title['district']
-        for i, item in enumerate(district_title):
+    def district_crawl(self, district: dict, commune: dict):
+        try:
+            self.open()
+            element_present = EC.presence_of_element_located((By.ID, "maTinh"))
+            WebDriverWait(driver=self.driver, timeout=self.time_out).until(element_present)
+            time.sleep(2)
+
+            tinh_selection = self.driver.find_element(By.ID, "maTinh")
+            tinh_choice = Select(tinh_selection)
+            tinh_choice.select_by_visible_text(self.city_title['id'])
+            element_present = EC.presence_of_element_located((By.XPATH,
+                                                              "/html/body/div/div[1]/div[4]/div[4]/div[2]/div/div[1]/div[1]/div/div/div[2]/div/form/div[2]/select/option[2]"))
+            WebDriverWait(driver=self.driver, timeout=self.time_out).until(element_present)
+            time.sleep(2)
+
+            quan_huyen_selection = self.driver.find_element(By.ID, "maHuyen")
             quan_huyen_choice = Select(quan_huyen_selection)
-            quan_huyen_choice.select_by_value(item['id'])
+            quan_huyen_choice.select_by_visible_text(district['id'])
+            element_present = EC.presence_of_element_located((By.XPATH,
+                                                              "/html/body/div/div[1]/div[4]/div[4]/div[2]/div/div[1]/div[1]/div/div/div[2]/div/form/div[3]/select"))
+            WebDriverWait(driver=self.driver, timeout=self.time_out).until(element_present)
+            time.sleep(2)
+
+            xa_selection = self.driver.find_element(By.ID, "maXa")
+            xa_choice = Select(xa_selection)
+            xa_choice.select_by_visible_text(commune['id'])
+            time.sleep(2)
+
             find_btn = self.driver.find_element(By.ID, "nttSearchButton")
             action = ActionChains(self.driver)
             action.click(on_element=find_btn)
             action.perform()
-            time.sleep(1)
-            self.do_get_page(item['id'])
-            self.data.clear()
+            time.sleep(2)
 
-    def do_get_page(self, item):
+            self.do_get_page(district['id'], commune['id'])
+            self.data.clear()
+            self.driver.quit()
+        except TimeoutException as e:
+            print(e)
+
+    def do_get_page(self, district_id: int, commune_id: int):
         while True:
-            table = self.driver.find_element(By.CLASS_NAME, "ta_border")
-            rows = table.find_elements(By.TAG_NAME, "tr")[2:]
-            for row in rows:
-                try:
-                    self.data.append([col.text for col in row.find_elements(By.TAG_NAME, "td")])
-                except Exception as e:
-                    print(e)
-            self.do_save(item)
+            time_out = 5
+            element_present = EC.presence_of_element_located((By.XPATH,
+                                                              "/html/body/div/div[1]/div[4]/div[4]/div[2]/div/div[1]/div[1]/div/div/div[2]/div/form/div[10]/div[4]/table"))
+            WebDriverWait(driver=self.driver, timeout=time_out).until(element_present)
             try:
-                time.sleep(1)
+                table = self.driver.find_element(By.XPATH,
+                                                 "/html/body/div/div[1]/div[4]/div[4]/div[2]/div/div[1]/div[1]/div/div/div[2]/div/form/div[10]/div[4]/table")
+                cells = table.find_elements(By.TAG_NAME, "td")
+                self.data.extend(np.array([cell.text for cell in cells]).reshape(-1, 14).tolist())
+            except Exception as e:
+                pass
+            self.do_save(district_id, commune_id)
+            try:
                 next_btn = self.driver.find_element(By.ID, "nextPage")
                 action = ActionChains(self.driver)
                 action.click(on_element=next_btn)
                 action.perform()
-                time.sleep(1.5)
+                time.sleep(2)
             except Exception as e:
                 break
 
-    def do_save(self, huyen_code: str):
+    def do_save(self, district_id: int, commune_id: int):
         head = ("stt", "ho_ten", "ma_so_thue",
                 "ki_lap_bo", "dia_chi",
                 "nganh_nghe", "doanh_thu",
@@ -74,7 +104,7 @@ class HouseHoldTaxInfo:
                 "thue_tai_nguyen", "thue_bvmt",
                 "phi_bvmt")
         df = pd.DataFrame(index=head, data=np.transpose(self.data, (1, 0)))
-        df.transpose().to_excel(r"data/{}_{}.xlsx".format(self.city_title['id'], huyen_code))
+        df.transpose().to_excel(r"data/{}_{}_{}.xlsx".format(self.city_title['id'], district_id, commune_id))
 
 
 def do_crawl(url, selected_data):
@@ -84,15 +114,17 @@ def do_crawl(url, selected_data):
 
 if __name__ == "__main__":
     url = r'https://www.gdt.gov.vn/wps/portal/home/hct'
-    district_data = r'./district.json'
+    district_data = r'./commune.json'
     data = json.loads(open(district_data, 'r', encoding='utf-8').read())
     select_data = None
     for item in data:
-        if item['name'] == 'Hà Nội':
+        # if item['name'] == 'TP Hồ Chí Minh':
+        if unicodedata.normalize("NFC", item['id']) == unicodedata.normalize("NFC", 'Hà Nội'):
+            # if unicodedata.normalize("NFC", item['name']) == unicodedata.normalize("NFC", 'TP Hồ Chí Minh'):
             select_data = item
             break
 
-    thread_num = 3
+    thread_num = 5
     data_len = len(select_data['district'])
     part_len = data_len // thread_num
     threads = []
@@ -103,8 +135,9 @@ if __name__ == "__main__":
         thread = Thread(target=do_crawl, args=(url, tmp))
         threads.append(thread)
 
-    for i in range(thread_num):
+    start = 2
+    for i in range(start, start + 1):
         threads[i].start()
 
-    for i in range(thread_num):
+    for i in range(start, start + 1):
         threads[i].join()
