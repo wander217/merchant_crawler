@@ -20,7 +20,7 @@ class HouseHoldTaxInfo:
         self.driver = None
         self.url = url
         self.city_title = city_title
-        self.time_out = 5
+        self.time_out = 20
 
     def open(self):
         executable_path: str = r"./chromedriver_win32/chromedriver.exe"
@@ -29,10 +29,10 @@ class HouseHoldTaxInfo:
 
     def do_crawl(self):
         for district in self.city_title['district']:
-            for commune in district['commune']:
-                self.district_crawl(district, commune)
+            # for commune in district['commune']:
+            self.district_crawl(district)
 
-    def district_crawl(self, district: dict, commune: dict):
+    def district_crawl(self, district: dict):
         try:
             self.open()
             element_present = EC.presence_of_element_located((By.ID, "maTinh"))
@@ -55,10 +55,10 @@ class HouseHoldTaxInfo:
             WebDriverWait(driver=self.driver, timeout=self.time_out).until(element_present)
             time.sleep(2)
 
-            xa_selection = self.driver.find_element(By.ID, "maXa")
-            xa_choice = Select(xa_selection)
-            xa_choice.select_by_visible_text(commune['id'])
-            time.sleep(2)
+            # xa_selection = self.driver.find_element(By.ID, "maXa")
+            # xa_choice = Select(xa_selection)
+            # xa_choice.select_by_visible_text(commune['id'])
+            # time.sleep(2)
 
             find_btn = self.driver.find_element(By.ID, "nttSearchButton")
             action = ActionChains(self.driver)
@@ -66,13 +66,13 @@ class HouseHoldTaxInfo:
             action.perform()
             time.sleep(2)
 
-            self.do_get_page(district['id'], commune['id'])
+            self.do_get_page(district['id'])
             self.data.clear()
             self.driver.quit()
         except TimeoutException as e:
             print(e)
 
-    def do_get_page(self, district_id: int, commune_id: int):
+    def do_get_page(self, district_id: int):
         while True:
             time_out = 5
             element_present = EC.presence_of_element_located((By.XPATH,
@@ -84,8 +84,8 @@ class HouseHoldTaxInfo:
                 cells = table.find_elements(By.TAG_NAME, "td")
                 self.data.extend(np.array([cell.text for cell in cells]).reshape(-1, 14).tolist())
             except Exception as e:
-                pass
-            self.do_save(district_id, commune_id)
+                print("Mạng chậm")
+            self.do_save(district_id)
             try:
                 next_btn = self.driver.find_element(By.ID, "nextPage")
                 action = ActionChains(self.driver)
@@ -95,7 +95,7 @@ class HouseHoldTaxInfo:
             except Exception as e:
                 break
 
-    def do_save(self, district_id: int, commune_id: int):
+    def do_save(self, district_id: int):
         head = ("stt", "ho_ten", "ma_so_thue",
                 "ki_lap_bo", "dia_chi",
                 "nganh_nghe", "doanh_thu",
@@ -104,7 +104,7 @@ class HouseHoldTaxInfo:
                 "thue_tai_nguyen", "thue_bvmt",
                 "phi_bvmt")
         df = pd.DataFrame(index=head, data=np.transpose(self.data, (1, 0)))
-        df.transpose().to_excel(r"data/{}_{}_{}.xlsx".format(self.city_title['id'], district_id, commune_id))
+        df.transpose().to_excel(r"data/{}_{}.xlsx".format(self.city_title['id'], district_id))
 
 
 def do_crawl(url, selected_data):
@@ -124,7 +124,7 @@ if __name__ == "__main__":
             select_data = item
             break
 
-    thread_num = 5
+    thread_num = 10
     data_len = len(select_data['district'])
     part_len = data_len // thread_num
     threads = []
